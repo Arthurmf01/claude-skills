@@ -1,6 +1,6 @@
 ---
 name: build
-description: Execute the implementation phase of a planned project as a lightweight long-running-agent harness. Drive a Generator->Evaluator loop against a written spec until acceptance criteria pass. Use AFTER planning (see the plan-solo skill) has produced Specifications + Implementation Strategy and the work is now "build it". Trigger on "let's build / implement / ship this", "start the build", "work through the implementation strategy", or resuming a half-built project ("pick up where we left off"). Runs in the code repo. Maintains cross-session continuity (PROGRESS.md, DECISIONS.md, a verifiable feature list) and uses a SEPARATE evaluator subagent, never the generator grading its own work. For UI-bearing projects that carry a Design spec, also runs a separate design-critic loop (screenshots only, scored against a design quality bar). Do not trigger for one-off edits, debugging a single failure, or planning.
+description: Execute the implementation phase of a planned project as a lightweight long-running-agent harness. Drive a Generator->Evaluator loop against a written spec until acceptance criteria pass. Use AFTER planning (see the plan-solo skill) has produced Specifications + Implementation Strategy and the work is now "build it". Trigger on "let's build / implement / ship this", "start the build", "work through the implementation strategy", or resuming a half-built project ("pick up where we left off"). Runs in the code repo. Maintains cross-session continuity (PROGRESS.md, DECISIONS.md, a verifiable feature list) and always uses at least two SEPARATE, confrontational evaluator subagents, never the generator grading its own work, scaling to a full multi-agent builder-fleet + red-team orchestration (via a workflow-orchestration tool) when genuine scope/complexity signals warrant it, never by default. For UI-bearing projects that carry a Design spec, also runs a separate design-critic loop (screenshots only, scored against a design quality bar). Do not trigger for one-off edits, debugging a single failure, or planning.
 ---
 
 # Build Skill (`/build`)
@@ -15,7 +15,7 @@ Every harness component encodes an assumption about what the model can't do alon
 
 - **Strip:** context resets / compaction rituals; per-sprint decomposition; the artificial "one feature per session" limit; a separate initialiser-vs-coder agent split. Modern models run continuously through these.
 - **Keep (still load-bearing on any model):**
-  1. **Generator-Evaluator separation.** Self-evaluation is systematically over-positive: agents confidently praise their own mediocre work. A separate judge is the single strongest lever. Model-independent; never strip this.
+  1. **Generator-Evaluator separation.** Self-evaluation is systematically over-positive: agents confidently praise their own mediocre work. A separate judge is the single strongest lever. Model-independent; never strip this. Floor: **at least two** independent, confrontational reviewers, not one — a lone evaluator can still rubber-stamp; two reviewers hunting for bugs give a tie-break signal a single judge can't (see §4, §4a).
   2. **Cross-session continuity artifacts.** Whenever work spans more than one context window, the next session needs machine-readable state or it drifts and re-does work.
   3. **Acceptance criteria fixed before coding.** Verifiable, not vibes.
   4. **The evaluator exercises the live artifact** (not just reads code) for anything with runtime/UI behaviour.
@@ -80,18 +80,36 @@ If no feature list exists, build it from the spec's acceptance criteria — one 
 - Checkpoint with **git** (on the build branch) + a `PROGRESS.md` update at each meaningful chunk (descriptive messages; git is the rollback path to a known-good state).
 - Run each feature's verification command. Only a passing command sets `passing`.
 
-### 4. Evaluate — separate subagent, never self-review
+### 4. Evaluate — a reviewer pair, never self-review
 
-When a chunk of features reports `passing`, spawn a **distinct evaluator** subagent. The main session is the generator; the subagent is the judge, and they must be different contexts. The evaluator:
+When a chunk of features reports `passing`, spawn **at least two distinct evaluator** subagents, each in its own context. The main session is the generator; the subagents are the judges. **This floor of two is not optional and does not scale down** — even a one-file fix gets a reviewer pair before it's called done; only the orchestration *above* that floor (§4a) scales with project size. Each evaluator:
 
-- Receives the relevant acceptance criteria and is told to be **adversarial and nitpicky**: default to FAIL on doubt, probe edge cases, don't praise.
+- Receives the relevant acceptance criteria and is told to be **adversarial and nitpicky**: default to FAIL on doubt, probe edge cases, don't praise, actively try to break the work rather than confirm it.
 - **Exercises the running artifact**, not just the source:
   - For a **web UI**, drive the live app through browser-automation tooling. Create a new tab, don't reuse the user's.
   - For a **CLI/API**, run real invocations and assert on output/exit codes.
 - Returns structured findings: per criterion -> `pass`/`fail` + evidence + `file:line` for each defect. Granularity wanted: *"Rectangle fill tool — FAIL — only places tiles at drag start/end, doesn't fill the region (src/tools/fill.py:42)."*
 - Known blind spots to state, not hide: vision misses some layout bugs; browser automation can't drive native OS modals; deeply nested features slip through. Flag coverage gaps rather than implying full coverage.
 
-Feed the evaluator's failures back to the generator as the next work items. **Calibration:** if the evaluator runs too lenient or too strict over a couple of rounds, tighten its prompt — emphasise the dimensions the model is weak on by default, not the ones it already nails.
+**A feature only reaches `passing` once neither reviewer has a live blocking finding.** A single reviewer's approval is never sufficient — that's the whole point of the floor. Feed any failures back to the generator as the next work items. **Calibration:** if a reviewer runs too lenient or too strict over a couple of rounds, tighten its prompt — emphasise the dimensions the model is weak on by default, not the ones it already nails.
+
+### 4a. Scaling the review — from a reviewer pair to full orchestration
+
+The two-reviewer floor above is the minimum for every build, regardless of size. Whether to go further — a full builder fleet plus a dedicated red team via a workflow-orchestration tool — is a judgement call made fresh each time, not a default. Spinning up a large multi-agent orchestration costs real tokens; most builds (a single feature, a small app, a handful of pages) stay inside the lightweight loop in §4.
+
+**Escalate only when a genuine signal is present:**
+- The work decomposes into multiple genuinely independent, parallel-buildable units (separate pages, components, or modules that don't share in-flight state) — enough that a real fleet, not a padded one, would result.
+- The project is large or unfamiliar enough that a single generator pass is likely to miss cross-cutting issues a second builder perspective would catch.
+- The user has explicitly asked for orchestration on this specific build. An explicit ask satisfies a workflow-orchestration tool's own opt-in gate on its own — don't re-litigate whether to use it, only how to size it.
+
+**When escalating, compose the fleet deliberately:**
+- **Builders** — one agent per independent unit of work, weighted toward the strongest available model, with a minority on a lighter/cheaper model where that unit doesn't need the extra strength. Size to the actual decomposition; don't pad the fleet past what the task supports.
+- **Red team** — always at least two agents (the §4 floor, scaled up), briefed to confrontationally hunt for bugs/regressions/edge cases rather than confirm correctness. Keep the red team's model assignment distinct from the builders' so it isn't reviewing in the same "voice" it built in. A feature still only reaches `passing` once the red team can't break it.
+- Keep the design-critic (§4b) as a separate lane — it judges visual quality, the red team judges correctness. Don't merge them.
+
+**Log the call.** Whichever size is chosen — reviewer pair only, or a full fleet — state the reasoning in `DECISIONS.md`: what signal justified (or didn't justify) the scale, and the fleet composition if escalated. So the next session doesn't have to re-derive it or wonder why a one-page fix got five agents.
+
+This stays inside `/build`, not a separate skill: it's the same Generator-Evaluator principle from the harness philosophy, just with a higher floor and an explicit, judgement-gated escalation path. A standalone skill would duplicate `/build`'s triggering logic for no benefit.
 
 ### 4b. Design-critic — separate subagent, screenshots only
 
@@ -117,13 +135,15 @@ Track a design-critic pass as its own feature-list verification for visual featu
 
 ## Scaling guidance
 
-- **Small (single file, trivial CLI):** thin loop — generate, run tests, one evaluator pass, checkpoint. Skip `DECISIONS.md` if there were no non-obvious choices.
-- **Medium (typical app):** full loop, single evaluator at the end of each feature batch.
-- **Large / unfamiliar territory:** evaluator per feature; consider role-split generators (impl / test), but only if a plain loop proves insufficient. Add complexity reactively, never upfront.
+- **Small (single file, trivial CLI):** thin loop — generate, run tests, the two-reviewer floor (§4) at the end, checkpoint. Skip `DECISIONS.md` if there were no non-obvious choices. No orchestration tooling needed; two evaluator subagents suffice.
+- **Medium (typical app):** full loop, the two-reviewer floor at the end of each feature batch. Still no full orchestration unless the project genuinely decomposes into parallel-buildable units (§4a).
+- **Large / many independently-buildable surfaces / unfamiliar territory:** escalate per §4a — a weighted builder fleet plus a dedicated red team (≥2), sized to the actual decomposition. Add complexity reactively, never upfront, and log the reasoning in `DECISIONS.md`.
 
 ## Anti-patterns
 
 - **Generator grading itself.** The whole point. Always a separate context for evaluation.
+- **Marking complete on a single reviewer's approval.** The floor is two confrontational reviewers, every build, no exception — one judge can still rubber-stamp.
+- **Escalating to full multi-agent orchestration by default.** Spinning up a builder fleet + red team when the work doesn't genuinely decompose into parallel units, or scope doesn't warrant it, burns tokens for no signal gain. Default to the §4 reviewer pair; escalate only on a real signal (§4a).
 - **Design-critic seeing the code.** For UI projects, the critic judges screenshots against the design bar, nothing else; showing it the implementation collapses it back into self-review.
 - **Imagining reference sites instead of scouting them.** If `Design.md` names inspiration sites, the scout must visit them live and extract real tokens; "I know what Linear looks like" produces generic design against a north star that doesn't exist.
 - **Over-specifying in the spec** so errors cascade into the build. Keep specs at user-story/architectural level; that's plan-solo's job.
