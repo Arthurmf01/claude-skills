@@ -10,7 +10,7 @@ plan-solo  ->  build  ->  (ship)
   the spec      SEPARATE evaluator
 ```
 
-Plus `vault-audit`, a read-only drift check for a markdown knowledge base.
+Plus `vault-audit`, a read-only drift check for a markdown knowledge base, and `outreach-critic`, the same separate-judge idea applied to messages you send to people.
 
 ---
 
@@ -33,6 +33,11 @@ Read-only audit of a markdown vault (Obsidian or similar) against its own rules 
 
 **Use it when:** your notes system has drifted from the structure you meant it to have.
 
+### `outreach-critic` — a hostile first reader for your outreach
+Before you see a drafted message, a separate sub-agent plays the person it is going to: it reads the draft cold and returns a verdict (SEND, FIX or REWORK), the weakest lines with the recipient's reaction to each, and a rewrite. It takes your claims about yourself as given, adds nothing you did not write, and is allowed to say SEND. Your own framing and house style live in a private `rules.md` (see `rules.example.md`). A headless drafting agent can call it through the contract in its `SKILL.md`, so drafts arrive already critiqued.
+
+**Use it when:** you are about to send a cold or warm message and want the recipient's reaction, not your own.
+
 ---
 
 ## Why a separate evaluator
@@ -52,9 +57,15 @@ git clone https://github.com/Arthurmf01/claude-skills.git
 cp -r claude-skills/plan-solo  ~/.claude/skills/
 cp -r claude-skills/build      ~/.claude/skills/
 cp -r claude-skills/vault-audit ~/.claude/skills/
+
+# outreach-critic: a skill plus a sub-agent definition
+mkdir -p ~/.claude/skills/outreach-critic ~/.claude/agents
+cp claude-skills/outreach-critic/SKILL.md claude-skills/outreach-critic/rules.example.md ~/.claude/skills/outreach-critic/
+cp claude-skills/outreach-critic/agent/outreach-critic.md ~/.claude/agents/
+cp ~/.claude/skills/outreach-critic/rules.example.md ~/.claude/skills/outreach-critic/rules.md   # then edit it
 ```
 
-Then invoke them by name in a session (`/plan-solo`, `/build`, `/vault-audit`) or just describe the task and let Claude pick.
+Then invoke them by name in a session (`/plan-solo`, `/build`, `/vault-audit`, `/outreach-critic`) or just describe the task and let Claude pick.
 
 ---
 
